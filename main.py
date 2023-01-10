@@ -2,6 +2,8 @@ import logging
 import sys
 import time
 from logging import getLogger
+from urllib.parse import urlparse, urlunsplit
+from urllib.robotparser import RobotFileParser
 
 import requests
 
@@ -50,5 +52,32 @@ def extract_data(url):
         print("Paragraph", paragraph.text, paragraph.links, paragraph.class_type)
 
 
+def robots_allowed(url):
+    try:
+        parsed_url = urlparse(url)
+    except ValueError:
+        logger.info(f"Unable to parse URL: {url}")
+        return False
+
+    if parsed_url.path.rstrip('/') == '' and parsed_url.query == '':
+        logger.info(f"Allowing root domain for URL: {url}")
+        return True
+
+    robots_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, 'robots.txt', '', ''))
+
+    parse_robots = RobotFileParser(robots_url)
+    parse_robots.read()
+    allowed = parse_robots.can_fetch('Mwmbl', url)
+    logger.info(f"Robots allowed for {url}: {allowed}")
+    return allowed
+
+
+def crawl(url):
+    allowed = robots_allowed(url)
+    if allowed:
+        extract_data(url)
+
+
 if __name__ == '__main__':
-    extract_data("https://blog.mwmbl.org/articles/fall-2022-update/")
+    crawl("https://blog.mwmbl.org/articles/fall-2022-update/")
+    crawl("https://google.com/?s=banana")
