@@ -378,20 +378,18 @@ def revise_paragraph_classification(paragraphs, max_heading_distance=MAX_HEADING
             j += 1
 
 
-def justext(html_text, stoplist, length_low=LENGTH_LOW_DEFAULT,
-        length_high=LENGTH_HIGH_DEFAULT, stopwords_low=STOPWORDS_LOW_DEFAULT,
-        stopwords_high=STOPWORDS_HIGH_DEFAULT, max_link_density=MAX_LINK_DENSITY_DEFAULT,
-        max_heading_distance=MAX_HEADING_DISTANCE_DEFAULT, no_headings=NO_HEADINGS_DEFAULT,
-        encoding=None, default_encoding=DEFAULT_ENCODING,
-        enc_errors=DEFAULT_ENC_ERRORS, preprocessor=preprocessor):
+def justext_from_dom(dom, stoplist, length_low=LENGTH_LOW_DEFAULT,
+                     length_high=LENGTH_HIGH_DEFAULT, stopwords_low=STOPWORDS_LOW_DEFAULT,
+                     stopwords_high=STOPWORDS_HIGH_DEFAULT, max_link_density=MAX_LINK_DENSITY_DEFAULT,
+                     max_heading_distance=MAX_HEADING_DISTANCE_DEFAULT, no_headings=NO_HEADINGS_DEFAULT,
+                     preprocessor=preprocessor):
     """
     Converts an HTML page into a list of classified paragraphs. Each paragraph
     is represented as instance of class ˙˙justext.paragraph.Paragraph˙˙.
     """
-    dom = html_to_dom(html_text, default_encoding, encoding, enc_errors)
-    dom = preprocessor(dom)
+    dom_preprocessed = preprocessor(dom)
 
-    paragraphs = ParagraphMaker.make_paragraphs(dom)
+    paragraphs = ParagraphMaker.make_paragraphs(dom_preprocessed)
 
     classify_paragraphs(paragraphs, stoplist, length_low, length_high,
         stopwords_low, stopwords_high, max_link_density, no_headings)

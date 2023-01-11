@@ -9,6 +9,7 @@ from urllib.robotparser import RobotFileParser
 import requests
 
 from justext import core, utils
+from justext.core import html_to_dom
 from justext.paragraph import Paragraph
 
 TIMEOUT_SECONDS = 3
@@ -17,6 +18,10 @@ MAX_URL_LENGTH = 150
 BAD_URL_REGEX = re.compile(r'\/\/localhost\b|\.jpg$|\.png$|\.js$|\.gz$|\.zip$|\.pdf$|\.bz2$|\.ipynb$|\.py$')
 MAX_NEW_LINKS = 50
 MAX_EXTRA_LINKS = 50
+NUM_TITLE_CHARS = 65
+NUM_EXTRACT_CHARS = 155
+DEFAULT_ENCODING = 'utf8'
+DEFAULT_ENC_ERRORS = 'replace'
 
 
 
@@ -50,17 +55,6 @@ def fetch(url):
             break
 
     return r.status_code, content
-
-
-def extract_data(url):
-    status_code, content = fetch(url)
-    paragraphs = core.justext(content, utils.get_stoplist("English"))
-    for paragraph in paragraphs:
-        print("Paragraph", paragraph.text, paragraph.links, paragraph.class_type)
-
-    new_links, extra_links = get_new_links(paragraphs)
-    logger.info(f"Got new links {new_links}")
-    logger.info(f"Got extra links {extra_links}")
 
 
 def robots_allowed(url):
@@ -110,12 +104,81 @@ def get_new_links(paragraphs: list[Paragraph]):
     return new_links, extra_links
 
 
-def crawl(url):
+def crawl_url(url):
+    js_timestamp = int(time.time() * 1000)
     allowed = robots_allowed(url)
-    if allowed:
-        extract_data(url)
+    if not allowed:
+        return {
+            'url': url,
+            'status': None,
+            'timestamp': js_timestamp,
+            'content': None,
+            'error': {
+                'name': 'RobotsDenied',
+                'message': 'Robots do not allow this URL',
+            }
+        }
+
+    status_code, content = fetch(url)
+
+    if len(content) == 0:
+        return {
+            'url': url,
+            'status': status_code,
+            'timestamp': js_timestamp,
+            'content': None,
+            'error': {
+                'name': 'NoResponseText',
+                'message': 'No response found',
+            }
+        }
+
+    dom = html_to_dom(content, DEFAULT_ENCODING, None, DEFAULT_ENC_ERRORS)
+    titles = dom.xpath("//title")
+    title = titles[0].text.strip() if len(titles) > 0 else None
+    if len(title) > NUM_TITLE_CHARS:
+        title = title[:NUM_TITLE_CHARS - 1] + '…'
+
+    paragraphs = core.justext_from_dom(dom, utils.get_stoplist("English"))
+
+    new_links, extra_links = get_new_links(paragraphs)
+    logger.info(f"Got new links {new_links}")
+    logger.info(f"Got extra links {extra_links}")
+
+    extract = ''
+    for paragraph in paragraphs:
+        if paragraph.class_type != 'good':
+            continue
+        extract += ' ' + paragraph.text.strip()
+        if len(extract) > NUM_EXTRACT_CHARS:
+            extract = extract[:NUM_EXTRACT_CHARS - 1] + '…'
+            break
+
+    return {
+      'url': url,
+      'status': status_code,
+      'timestamp': js_timestamp,
+      'content': {
+        'title': title,
+        'extract': extract,
+        'links': sorted(new_links),
+        'extra_links': sorted(extra_links),
+      },
+      'error': None
+    }
+
+
+def crawl_batch(batch):
+    crawl_results = []
+    for url in batch:
+        result = crawl_url(url)
+        logger.info(f"Got crawl result: {result}")
+        crawl_results.append(result)
+    return crawl_results
 
 
 if __name__ == '__main__':
-    crawl("https://blog.mwmbl.org/articles/fall-2022-update/")
-    crawl("https://google.com/?s=banana")
+    batch = crawl_batch([
+        "https://blog.mwmbl.org/articles/fall-2022-update/",
+        "https://google.com/?s=banana"
+        ])
