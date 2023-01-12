@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import sys
@@ -5,12 +6,19 @@ import time
 from logging import getLogger
 from urllib.parse import urlparse, urlunsplit
 from urllib.robotparser import RobotFileParser
+from uuid import uuid4
 
 import requests
+from xdg import xdg_config_home
 
 from justext import core, utils
 from justext.core import html_to_dom
 from justext.paragraph import Paragraph
+
+DOMAIN = 'https://api.mwmbl.org/'
+CRAWLER_ONLINE_URL = DOMAIN + 'crawler/'
+POST_BATCH_URL = DOMAIN + 'crawler/batches/'
+POST_NEW_BATCH_URL = DOMAIN + 'crawler/batches/new'
 
 TIMEOUT_SECONDS = 3
 MAX_FETCH_SIZE = 1024*1024
@@ -177,8 +185,39 @@ def crawl_batch(batch):
     return crawl_results
 
 
-if __name__ == '__main__':
+def get_user_id():
+    path = xdg_config_home() / 'mwmbl' / 'config.json'
+    try:
+        return json.loads(path.read_text())['user_id']
+    except FileNotFoundError:
+        user_id = str(uuid4())
+        path.parent.mkdir(exist_ok=True, parents=True)
+        path.write_text(json.dumps({'user_id': user_id}))
+        return user_id
+
+
+def send_batch(batch_items):
+    user_id = get_user_id()
+    logger.info(f"Got user id {user_id}")
+
+    batch = {
+      'user_id': user_id,
+      'items': batch_items,
+    }
+
+    logger.info("Sending batch", batch)
+
+    response = requests.post(POST_BATCH_URL, json=batch, headers={'Content-Type': 'application/json'})
+    logger.info(f"Response status: {response.status_code}, {response.content}")
+
+
+def run_crawl_iteration():
     batch = crawl_batch([
         "https://blog.mwmbl.org/articles/fall-2022-update/",
         "https://google.com/?s=banana"
         ])
+    send_batch(batch)
+
+
+if __name__ == '__main__':
+    run_crawl_iteration()
