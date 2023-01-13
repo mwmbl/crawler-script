@@ -180,7 +180,10 @@ class ParagraphMaker(ContentHandler):
                 self.paragraph.append_text(' ')
             elif name == 'a':
                 self.link = True
-                self.paragraph.links.add(attrs.getValueByQName('href'))
+                try:
+                    self.paragraph.links.add(attrs.getValueByQName('href'))
+                except KeyError:
+                    pass
             self.paragraph.tags_count += 1
 
     def endElementNS(self, name, qname):

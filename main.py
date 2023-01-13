@@ -9,6 +9,7 @@ from urllib.robotparser import RobotFileParser
 from uuid import uuid4
 
 import requests
+from requests import ReadTimeout, TooManyRedirects
 from xdg import xdg_config_home
 
 from justext import core, utils
@@ -79,7 +80,18 @@ def robots_allowed(url):
     robots_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, 'robots.txt', '', ''))
 
     parse_robots = RobotFileParser(robots_url)
-    parse_robots.read()
+
+    try:
+        status_code, content = fetch(robots_url)
+    except (ValueError, ConnectionError):
+        logger.exception(f"Robots error: {robots_url}")
+        return True
+
+    if status_code != 200:
+        logger.info(f"Robots status code: {status_code}")
+        return True
+
+    parse_robots.parse(content.decode('utf-8').splitlines())
     allowed = parse_robots.can_fetch('Mwmbl', url)
     logger.info(f"Robots allowed for {url}: {allowed}")
     return allowed
@@ -127,7 +139,19 @@ def crawl_url(url):
             }
         }
 
-    status_code, content = fetch(url)
+    try:
+        status_code, content = fetch(url)
+    except (TimeoutError, ReadTimeout, TooManyRedirects) as e:
+        return {
+            'url': url,
+            'status': None,
+            'timestamp': js_timestamp,
+            'content': None,
+            'error': {
+                'name': 'AbortError',
+                'message': str(e),
+            }
+        }
 
     if len(content) == 0:
         return {
@@ -142,8 +166,13 @@ def crawl_url(url):
         }
 
     dom = html_to_dom(content, DEFAULT_ENCODING, None, DEFAULT_ENC_ERRORS)
-    titles = dom.xpath("//title")
-    title = titles[0].text.strip() if len(titles) > 0 else None
+    title_element = dom.xpath("//title")
+    title = ""
+    if len(title_element) > 0:
+        title_text = title_element[0].text
+        if title_text is not None:
+            title = title_text.strip()
+
     if len(title) > NUM_TITLE_CHARS:
         title = title[:NUM_TITLE_CHARS - 1] + '…'
 
@@ -179,6 +208,7 @@ def crawl_url(url):
 def crawl_batch(batch):
     crawl_results = []
     for url in batch:
+        logger.info(f"Crawling URL {url}")
         result = crawl_url(url)
         logger.info(f"Got crawl result: {result}")
         crawl_results.append(result)
@@ -196,10 +226,7 @@ def get_user_id():
         return user_id
 
 
-def send_batch(batch_items):
-    user_id = get_user_id()
-    logger.info(f"Got user id {user_id}")
-
+def send_batch(batch_items, user_id):
     batch = {
       'user_id': user_id,
       'items': batch_items,
@@ -211,13 +238,34 @@ def send_batch(batch_items):
     logger.info(f"Response status: {response.status_code}, {response.content}")
 
 
-def run_crawl_iteration():
-    batch = crawl_batch([
-        "https://blog.mwmbl.org/articles/fall-2022-update/",
-        "https://google.com/?s=banana"
-        ])
-    send_batch(batch)
+def get_batch(user_id: str):
+    response = requests.post(POST_NEW_BATCH_URL, json={'user_id': user_id})
+    if response.status_code != 200:
+        raise ValueError(f"No batch received, status code {response.status_code}, content {response.content}")
+
+    urls_to_crawl = response.json()
+    if len(urls_to_crawl) == 0:
+        raise ValueError("No URLs in batch")
+
+    return urls_to_crawl
+
+
+def run_crawl_iteration(user_id):
+    new_batch = get_batch(user_id)
+    logger.info(f"Got batch with {len(new_batch)} items")
+    crawled_batch = crawl_batch(new_batch)
+    send_batch(crawled_batch, user_id)
+
+
+def run_continuously():
+    user_id = get_user_id()
+    while True:
+        try:
+            run_crawl_iteration(user_id)
+        except Exception:
+            logger.exception("Exception running crawl iteration")
+            time.sleep(10)
 
 
 if __name__ == '__main__':
-    run_crawl_iteration()
+    run_continuously()
