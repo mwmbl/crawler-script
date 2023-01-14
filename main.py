@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import requests
 from requests import ReadTimeout, TooManyRedirects
+from urllib3.exceptions import NewConnectionError, MaxRetryError
 from xdg import xdg_config_home
 
 from justext import core, utils
@@ -83,7 +84,7 @@ def robots_allowed(url):
 
     try:
         status_code, content = fetch(robots_url)
-    except (ValueError, ConnectionError):
+    except (ValueError, ConnectionError, ReadTimeout, TimeoutError, OSError, NewConnectionError, MaxRetryError):
         logger.exception(f"Robots error: {robots_url}")
         return True
 
@@ -91,7 +92,11 @@ def robots_allowed(url):
         logger.info(f"Robots status code: {status_code}")
         return True
 
-    parse_robots.parse(content.decode('utf-8').splitlines())
+    try:
+        parse_robots.parse(content.decode('utf-8').splitlines())
+    except UnicodeDecodeError:
+        logger.exception("Unable to decode robots file")
+        return True
     allowed = parse_robots.can_fetch('Mwmbl', url)
     logger.info(f"Robots allowed for {url}: {allowed}")
     return allowed
@@ -205,14 +210,12 @@ def crawl_url(url):
     }
 
 
-def crawl_batch(batch):
-    crawl_results = []
+def crawl_batch(batch, crawl_results):
     for url in batch:
         logger.info(f"Crawling URL {url}")
         result = crawl_url(url)
         logger.info(f"Got crawl result: {result}")
         crawl_results.append(result)
-    return crawl_results
 
 
 def get_user_id():
@@ -253,8 +256,14 @@ def get_batch(user_id: str):
 def run_crawl_iteration(user_id):
     new_batch = get_batch(user_id)
     logger.info(f"Got batch with {len(new_batch)} items")
-    crawled_batch = crawl_batch(new_batch)
-    send_batch(crawled_batch, user_id)
+    crawl_results = []
+    try:
+        crawl_batch(new_batch, crawl_results)
+    except KeyboardInterrupt:
+        if len(crawl_results) > 0:
+            send_batch(crawl_results, user_id)
+        raise
+    send_batch(crawl_results, user_id)
 
 
 def run_continuously():
