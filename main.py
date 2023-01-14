@@ -3,7 +3,11 @@ import logging
 import re
 import sys
 import time
+from argparse import ArgumentParser
+from datetime import datetime
 from logging import getLogger
+from multiprocessing import Pool
+from ssl import SSLCertVerificationError
 from urllib.parse import urlparse, urlunsplit
 from urllib.robotparser import RobotFileParser
 from uuid import uuid4
@@ -11,6 +15,9 @@ from uuid import uuid4
 import requests
 from requests import ReadTimeout, TooManyRedirects
 from urllib3.exceptions import NewConnectionError, MaxRetryError
+
+ALLOWED_EXCEPTIONS = (ValueError, ConnectionError, ReadTimeout, TimeoutError,
+                       OSError, NewConnectionError, MaxRetryError, SSLCertVerificationError)
 from xdg import xdg_config_home
 
 from justext import core, utils
@@ -33,9 +40,6 @@ NUM_EXTRACT_CHARS = 155
 DEFAULT_ENCODING = 'utf8'
 DEFAULT_ENC_ERRORS = 'replace'
 
-
-
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 logger = getLogger(__name__)
 
@@ -61,7 +65,7 @@ def fetch(url):
 
         size += len(chunk)
         if size > MAX_FETCH_SIZE:
-            logger.info("Maximum size reached")
+            logger.debug(f"Maximum size reached for URL {url}")
             break
 
     return r.status_code, content
@@ -75,7 +79,7 @@ def robots_allowed(url):
         return False
 
     if parsed_url.path.rstrip('/') == '' and parsed_url.query == '':
-        logger.info(f"Allowing root domain for URL: {url}")
+        logger.debug(f"Allowing root domain for URL: {url}")
         return True
 
     robots_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, 'robots.txt', '', ''))
@@ -84,12 +88,12 @@ def robots_allowed(url):
 
     try:
         status_code, content = fetch(robots_url)
-    except (ValueError, ConnectionError, ReadTimeout, TimeoutError, OSError, NewConnectionError, MaxRetryError):
-        logger.exception(f"Robots error: {robots_url}")
+    except ALLOWED_EXCEPTIONS as e:
+        logger.debug(f"Robots error: {robots_url}, {e}")
         return True
 
     if status_code != 200:
-        logger.info(f"Robots status code: {status_code}")
+        logger.debug(f"Robots status code: {status_code}")
         return True
 
     try:
@@ -98,7 +102,7 @@ def robots_allowed(url):
         logger.exception("Unable to decode robots file")
         return True
     allowed = parse_robots.can_fetch('Mwmbl', url)
-    logger.info(f"Robots allowed for {url}: {allowed}")
+    logger.debug(f"Robots allowed for {url}: {allowed}")
     return allowed
 
 
@@ -110,7 +114,7 @@ def get_new_links(paragraphs: list[Paragraph]):
             for link in paragraph.links:
                 if link.startswith('http') and len(link) <= MAX_URL_LENGTH:
                     if BAD_URL_REGEX.search(link):
-                        logger.info(f"Found bad URL: {link}")
+                        logger.debug(f"Found bad URL: {link}")
                         continue
                     try:
                         parsed_url = urlparse(link)
@@ -146,7 +150,8 @@ def crawl_url(url):
 
     try:
         status_code, content = fetch(url)
-    except (TimeoutError, ReadTimeout, TooManyRedirects) as e:
+    except ALLOWED_EXCEPTIONS as e:
+        logger.debug(f"Exception crawling URl {url}: {e}")
         return {
             'url': url,
             'status': None,
@@ -181,11 +186,24 @@ def crawl_url(url):
     if len(title) > NUM_TITLE_CHARS:
         title = title[:NUM_TITLE_CHARS - 1] + '…'
 
-    paragraphs = core.justext_from_dom(dom, utils.get_stoplist("English"))
+    try:
+        paragraphs = core.justext_from_dom(dom, utils.get_stoplist("English"))
+    except Exception as e:
+        logger.exception("Error parsing paragraphs")
+        return {
+            'url': url,
+            'status': status_code,
+            'timestamp': js_timestamp,
+            'content': None,
+            'error': {
+                'name': e.__class__.__name__,
+                'message': str(e),
+            }
+        }
 
     new_links, extra_links = get_new_links(paragraphs)
-    logger.info(f"Got new links {new_links}")
-    logger.info(f"Got extra links {extra_links}")
+    logger.debug(f"Got new links {new_links}")
+    logger.debug(f"Got extra links {extra_links}")
 
     extract = ''
     for paragraph in paragraphs:
@@ -210,12 +228,10 @@ def crawl_url(url):
     }
 
 
-def crawl_batch(batch, crawl_results):
-    for url in batch:
-        logger.info(f"Crawling URL {url}")
-        result = crawl_url(url)
-        logger.info(f"Got crawl result: {result}")
-        crawl_results.append(result)
+def crawl_batch(batch, num_threads):
+    with Pool(num_threads) as pool:
+        result = pool.map(crawl_url, batch)
+    return result
 
 
 def get_user_id():
@@ -253,24 +269,30 @@ def get_batch(user_id: str):
     return urls_to_crawl
 
 
-def run_crawl_iteration(user_id):
+def run_crawl_iteration(user_id, num_threads):
     new_batch = get_batch(user_id)
     logger.info(f"Got batch with {len(new_batch)} items")
-    crawl_results = []
-    try:
-        crawl_batch(new_batch, crawl_results)
-    except KeyboardInterrupt:
-        if len(crawl_results) > 0:
-            send_batch(crawl_results, user_id)
-        raise
+    start_time = datetime.now()
+    crawl_results = crawl_batch(new_batch, num_threads)
+    total_time = (datetime.now() - start_time).total_seconds()
+    logger.info(f"Crawled batch in {total_time} seconds")
     send_batch(crawl_results, user_id)
 
 
 def run_continuously():
+    argparser = ArgumentParser()
+    argparser.add_argument("--num-threads", "-j", type=int, help="Number of threads to run concurrently", default=1)
+    argparser.add_argument("--debug", "-d", action="store_true")
+
+    args = argparser.parse_args()
+
+    level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(stream=sys.stdout, level=level)
+
     user_id = get_user_id()
     while True:
         try:
-            run_crawl_iteration(user_id)
+            run_crawl_iteration(user_id, args.num_threads)
         except Exception:
             logger.exception("Exception running crawl iteration")
             time.sleep(10)
