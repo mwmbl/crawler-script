@@ -6,14 +6,14 @@ import time
 from argparse import ArgumentParser
 from datetime import datetime
 from logging import getLogger
-from multiprocessing import Pool
+from multiprocessing.pool import ThreadPool
 from ssl import SSLCertVerificationError
 from urllib.parse import urlparse, urlunsplit
 from urllib.robotparser import RobotFileParser
 from uuid import uuid4
 
 import requests
-from requests import ReadTimeout, TooManyRedirects
+from requests import ReadTimeout
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 ALLOWED_EXCEPTIONS = (ValueError, ConnectionError, ReadTimeout, TimeoutError,
@@ -229,7 +229,7 @@ def crawl_url(url):
 
 
 def crawl_batch(batch, num_threads):
-    with Pool(num_threads) as pool:
+    with ThreadPool(num_threads) as pool:
         result = pool.map(crawl_url, batch)
     return result
 
