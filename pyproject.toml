@@ -1,18 +1,17 @@
 [tool.poetry]
-name = "crawler-script"
+name = "crawler_script"
 version = "0.1.0"
 description = "Script client to crawl Mwmbl"
 authors = ["Daoud Clarke <daoud.clarke@gmail.com>"]
 license = "AGPL v3"
 readme = "README.md"
-packages = [{include = "crawler_script"}]
+packages = [{include = "main.py"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.9"
 requests = "^2.28.1"
 lxml = "^4.9.2"
 xdg = "^5.1.1"
-
 
 [build-system]
 requires = ["poetry-core"]
