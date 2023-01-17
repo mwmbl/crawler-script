@@ -272,6 +272,10 @@ def get_batch(user_id: str):
 def run_crawl_iteration(user_id, num_threads):
     new_batch = get_batch(user_id)
     logger.info(f"Got batch with {len(new_batch)} items")
+    crawl_and_send_batch(new_batch, num_threads, user_id)
+
+
+def crawl_and_send_batch(new_batch, num_threads, user_id):
     start_time = datetime.now()
     crawl_results = crawl_batch(new_batch, num_threads)
     total_time = (datetime.now() - start_time).total_seconds()
@@ -283,6 +287,7 @@ def run_continuously():
     argparser = ArgumentParser()
     argparser.add_argument("--num-threads", "-j", type=int, help="Number of threads to run concurrently", default=1)
     argparser.add_argument("--debug", "-d", action="store_true")
+    argparser.add_argument("--url", "-u", nargs='+', help="Crawl the given URLs instead of requesting batches from the server")
 
     args = argparser.parse_args()
 
@@ -290,6 +295,11 @@ def run_continuously():
     logging.basicConfig(stream=sys.stdout, level=level)
 
     user_id = get_user_id()
+
+    if args.url:
+        crawl_and_send_batch(args.url, args.num_threads, user_id)
+        return
+
     while True:
         try:
             run_crawl_iteration(user_id, args.num_threads)
