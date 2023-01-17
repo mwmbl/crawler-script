@@ -7,7 +7,7 @@ Usage:
 python main.py [-j n] [-u url1 url2 ...]
 ```
 
-where n is the number of threads you want to run in parallel.
+where n is the number of threads you want to run in parallel. If you specify URLs using the `-u` option, then just those URLs will be crawled instead of retrieving batches from the server.
 
 Installing
 ----------
