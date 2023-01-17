@@ -1,0 +1,11 @@
+version: '2'
+
+services:
+  mwmbl-crawler:
+    image: mwmbl-crawler:latest
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    environment:
+      - THREADS=4
+    restart: always
