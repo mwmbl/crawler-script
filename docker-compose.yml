@@ -1,8 +1,8 @@
 version: '2'
 
 services:
-  app:
-    image: mwmbl-crawler
+  mwmbl-crawler:
+    image: mwmbl-crawler:latest
     build:
       context: ./
       dockerfile: Dockerfile
