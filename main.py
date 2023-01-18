@@ -96,11 +96,19 @@ def robots_allowed(url):
         logger.debug(f"Robots status code: {status_code}")
         return True
 
-    try:
-        parse_robots.parse(content.decode('utf-8').splitlines())
-    except UnicodeDecodeError:
-        logger.info(f"Unable to decode robots file: {robots_url}")
+    decoded = None
+    for encoding in ['utf-8', 'iso-8859-1']:
+        try:
+            decoded = content.decode(encoding).splitlines()
+            break
+        except UnicodeDecodeError:
+            pass
+
+    if decoded is None:
+        logger.info(f"Unable to decode robots file {robots_url}")
         return True
+    
+    parse_robots.parse(decoded)
     allowed = parse_robots.can_fetch('Mwmbl', url)
     logger.debug(f"Robots allowed for {url}: {allowed}")
     return allowed
