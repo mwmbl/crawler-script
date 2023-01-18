@@ -186,7 +186,7 @@ def crawl_url(url):
     try:
         dom = html_to_dom(content, DEFAULT_ENCODING, None, DEFAULT_ENC_ERRORS)
     except Exception as e:
-        logger.exception("Error parsing dom")
+        logger.exception(f"Error parsing dom: {url}")
         return {
             'url': url,
             'status': status_code,
