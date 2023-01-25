@@ -5,10 +5,11 @@ import sys
 import time
 from argparse import ArgumentParser
 from datetime import datetime
+from functools import reduce
 from logging import getLogger
 from multiprocessing.pool import ThreadPool
 from ssl import SSLCertVerificationError
-from urllib.parse import urlparse, urlunsplit
+from urllib.parse import urlparse, urlunsplit, urljoin
 from urllib.robotparser import RobotFileParser
 from uuid import uuid4
 
@@ -39,6 +40,7 @@ NUM_TITLE_CHARS = 65
 NUM_EXTRACT_CHARS = 155
 DEFAULT_ENCODING = 'utf8'
 DEFAULT_ENC_ERRORS = 'replace'
+MAX_SITE_URLS = 100
 
 
 logger = getLogger(__name__)
@@ -114,12 +116,27 @@ def robots_allowed(url):
     return allowed
 
 
-def get_new_links(paragraphs: list[Paragraph]):
+def get_new_links(paragraphs: list[Paragraph], current_url):
     new_links = set()
     extra_links = set()
+    parsed_url = urlparse(current_url)
+    base_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, "", "", ""))
+
     for paragraph in paragraphs:
         if len(paragraph.links) > 0:
+            logger.debug(f"Paragraph: {paragraph.text, paragraph.links}")
             for link in paragraph.links:
+                if not link.startswith("http"):
+                    if "://" in link:
+                        logger.debug(f"Bad URL: {link}")
+                        continue
+
+                    # Relative link
+                    if link.startswith("/"):
+                        link = urljoin(base_url, link)
+                    else:
+                        link = urljoin(current_url, link)
+
                 if link.startswith('http') and len(link) <= MAX_URL_LENGTH:
                     if BAD_URL_REGEX.search(link):
                         logger.debug(f"Found bad URL: {link}")
@@ -142,6 +159,7 @@ def get_new_links(paragraphs: list[Paragraph]):
 
 
 def crawl_url(url):
+    logger.info(f"Crawling URL {url}")
     js_timestamp = int(time.time() * 1000)
     allowed = robots_allowed(url)
     if not allowed:
@@ -223,7 +241,7 @@ def crawl_url(url):
             }
         }
 
-    new_links, extra_links = get_new_links(paragraphs)
+    new_links, extra_links = get_new_links(paragraphs, url)
     logger.debug(f"Got new links {new_links}")
     logger.debug(f"Got extra links {extra_links}")
 
@@ -305,11 +323,36 @@ def crawl_and_send_batch(new_batch, num_threads, user_id):
     send_batch(crawl_results, user_id)
 
 
+def recursively_crawl_site(site: str, num_threads: int, user_id: str):
+    desired_domain = urlparse(site).netloc
+    crawled_urls = set()
+    site_urls = {site}
+
+    all_results = []
+    while len(crawled_urls) < MAX_SITE_URLS:
+        crawl_results = crawl_batch(list(site_urls - crawled_urls), num_threads)
+        all_results += crawl_results
+        crawled_urls |= site_urls
+        urls = set()
+        for item in crawl_results:
+            if item["content"] is not None:
+                urls |= set(item["content"]["links"]) | set(item["content"]["extra_links"])
+        new_site_urls = {url for url in urls if urlparse(url).netloc == desired_domain}
+        site_urls |= new_site_urls
+        if len(site_urls - crawled_urls) == 0:
+            logger.info("No more pages to crawl")
+            break
+
+    logger.info(f"Crawled a total of {len(all_results)} for domain {desired_domain}")
+    send_batch(all_results[:100], user_id)
+
+
 def run_continuously():
     argparser = ArgumentParser()
     argparser.add_argument("--num-threads", "-j", type=int, help="Number of threads to run concurrently", default=1)
     argparser.add_argument("--debug", "-d", action="store_true")
     argparser.add_argument("--url", "-u", nargs='+', help="Crawl the given URLs instead of requesting batches from the server")
+    argparser.add_argument("--site", "-s", help=f"Recursively crawl a site (max {MAX_SITE_URLS} pages)")
 
     args = argparser.parse_args()
 
@@ -318,7 +361,11 @@ def run_continuously():
 
     user_id = get_user_id()
 
-    if args.url:
+    if args.site is not None:
+        recursively_crawl_site(args.site, args.num_threads, user_id)
+        return
+
+    if args.url is not None:
         crawl_and_send_batch(args.url, args.num_threads, user_id)
         return
 
