@@ -181,7 +181,7 @@ class ParagraphMaker(ContentHandler):
             elif name == 'a':
                 self.link = True
                 try:
-                    self.paragraph.links.add(attrs.getValueByQName('href'))
+                    self.paragraph.links.add(attrs.getValueByQName('href').strip())
                 except KeyError:
                     pass
             self.paragraph.tags_count += 1
