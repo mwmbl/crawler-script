@@ -66,7 +66,10 @@ def get_hn_urls(most_recent_ids):
     futures = [pool.submit(fetch_urls_for_item, item_id) for item_id in non_existing_ids]
     urls = []
     for future in futures:
-        urls += future.result()
+        try:
+            urls += future.result()
+        except Exception as e:
+            logging.error(f"Error fetching URLs: {e}")
 
     return urls
 
