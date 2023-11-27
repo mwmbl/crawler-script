@@ -11,10 +11,12 @@ import requests
 
 from main import send_batch, get_user_id
 
+
 DATABASE_PATH = 'hn.db'
 HREF_REGEX = re.compile(r'href="([^"]+)"')
 HN_URL = 'https://news.ycombinator.com/'
-NUM_ITEMS_TO_FETCH = 100
+NUM_ITEMS_TO_FETCH = 500
+NUM_THREADS = 50
 
 
 # Create a sqlite database to store IDs that have been retrieved
@@ -60,7 +62,7 @@ def get_hn_urls(most_recent_ids):
     non_existing_ids = [i for i in most_recent_ids if i not in existing_ids]
 
     # Call fetch_urls_for_item in parallel using threads
-    pool = ThreadPoolExecutor(max_workers=10)
+    pool = ThreadPoolExecutor(max_workers=NUM_THREADS)
     futures = [pool.submit(fetch_urls_for_item, item_id) for item_id in non_existing_ids]
     urls = []
     for future in futures:
@@ -115,16 +117,17 @@ def main():
             urls = [url for url, _ in urls_and_timestamps]
 
             item = {
-              'url': HN_URL,
-              'status': 200,
-              'timestamp': time,
-              'content': {
-                'title': "Hacker News",
-                'extract': "",
-                'links': urls,
-                'extra_links': [],
-              },
-              'error': None
+                'url': HN_URL,
+                'status': 200,
+                'timestamp': time,
+                'content': {
+                    'title': "Hacker News",
+                    'extract': "",
+                    'links': urls,
+                    'extra_links': [],
+                    'links_only': True,
+                },
+                'error': None
             }
             items.append(item)
             ids_processed += most_recent_ids
