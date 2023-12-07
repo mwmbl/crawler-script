@@ -1,22 +1,26 @@
+import json
 import logging
 import re
 import sqlite3
 import sys
+import time
 import urllib
 from concurrent.futures import ThreadPoolExecutor
 from html import unescape
 from urllib.parse import urlparse
 
 import requests
+from lxml.etree import ParserError
 
-from main import send_batch, get_user_id
-
+from justext.core import html_to_dom
+from main import send_batch, get_user_id, DEFAULT_ENCODING, DEFAULT_ENC_ERRORS, NUM_TITLE_CHARS, NUM_EXTRACT_CHARS
 
 DATABASE_PATH = 'hn.db'
 HREF_REGEX = re.compile(r'href="([^"]+)"')
 HN_URL = 'https://news.ycombinator.com/'
-NUM_ITEMS_TO_FETCH = 500
+NUM_ITEMS_TO_FETCH = 100
 NUM_THREADS = 50
+HN_ITEM_URL = 'https://news.ycombinator.com/item?id={}'
 
 
 # Create a sqlite database to store IDs that have been retrieved
@@ -53,7 +57,7 @@ def ids_exist(hn_ids: list[int]) -> list[int]:
     return ids
 
 
-def get_hn_urls(most_recent_ids):
+def get_hn_items(most_recent_ids):
     """
     Get a batch of 100 URLs from the Hacker News API
     """
@@ -63,40 +67,82 @@ def get_hn_urls(most_recent_ids):
 
     # Call fetch_urls_for_item in parallel using threads
     pool = ThreadPoolExecutor(max_workers=NUM_THREADS)
-    futures = [pool.submit(fetch_urls_for_item, item_id) for item_id in non_existing_ids]
-    urls = []
+    futures = [pool.submit(fetch_item, item_id) for item_id in non_existing_ids]
+    items = []
     for future in futures:
         try:
-            urls += future.result()
+            item = future.result()
+            assert item is not None
+            print("Got item", item)
+            items.append(item)
         except Exception as e:
-            logging.error(f"Error fetching URLs: {e}")
+            logging.exception(f"Error fetching items")
+            raise e
 
-    return urls
+    return items
 
 
-def fetch_urls_for_item(item_id):
+def fetch_item(item_id):
     # Extract URLs from the text
-    new_urls = []
-    item = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{item_id}.json').json()
-    if item is not None:
-        text = item.get('text', '')
-        timestamp = item['time'] * 1000
-        for line in text.split():
-            # Find all URLs in the text
-            matches = HREF_REGEX.findall(line)
-            for url in matches:
-                # url = match.group(1)
-                # Decode URL in format https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=33268319
-                decoded_url = unescape(url)
-                parsed_url = urlparse(decoded_url)
-                if parsed_url.netloc:
-                    new_urls.append((decoded_url, timestamp))
-                    print(f"Found URL in text for item {item_id}: {decoded_url}")
+    item_data = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{item_id}.json').json()
+    js_timestamp = int(time.time() * 1000)
+    if item_data is not None:
+        new_urls = []
+        content_str = item_data.get('text', '')
+        paragraphs = None
+        if content_str:
+            content = unescape(item_data.get('text'))
+            try:
+                dom = html_to_dom(content, DEFAULT_ENCODING, None, DEFAULT_ENC_ERRORS)
+                links = dom.xpath('//a')
+                for link in links:
+                    url = link.get('href')
+                    if url:
+                        new_urls.append(url)
+                        print(f"Found URL in text for item {item_id}: {url}")
+                paragraphs = [p.text for p in dom.xpath('//p') if p.text]
+            except ParserError:
+                print(f"Error parsing HTML for item {item_id}")
 
-        if 'url' in item:
-            new_urls.append((item['url'], timestamp))
-            print(f"Found URL in item {item_id} of type {item['type']}: {item['url']}")
-    return new_urls
+        if paragraphs is None:
+            paragraphs = []
+
+        if 'url' in item_data:
+            new_urls.append(item_data['url'])
+            print(f"Found URL in item {item_id} of type {item_data['type']}: {item_data['url']}")
+
+        if 'title' in item_data and item_data['title']:
+            title = unescape(item_data['title'])
+            extract = ' '.join(paragraphs)
+        else:
+            title = paragraphs[0] if paragraphs else ''
+            extract = ' '.join(paragraphs[1:])
+
+        if len(title) > NUM_TITLE_CHARS:
+            title = title[:NUM_TITLE_CHARS - 1] + '…'
+
+        if len(extract) > NUM_EXTRACT_CHARS:
+            extract = extract[:NUM_EXTRACT_CHARS - 1] + '…'
+
+        return {
+            'url': HN_ITEM_URL.format(item_id),
+            'status': 200,
+            'timestamp': js_timestamp,
+            'content': {
+                'title': title,
+                'extract': extract,
+                'links': new_urls,
+                'extra_links': [],
+                'links_only': False,
+            },
+            'error': None
+        }
+
+    return {
+        'url': HN_URL.format(item_id),
+        'status': 404,
+        'timestamp': js_timestamp,
+    }
 
 
 def main():
@@ -107,38 +153,38 @@ def main():
     create_id_database()
     max_item = requests.get('https://hacker-news.firebaseio.com/v0/maxitem.json').json()
     while True:
-        items = []
-        ids_processed = []
-        while len(items) < 10:
-            most_recent_ids = list(range(max_item, max_item - NUM_ITEMS_TO_FETCH, -1))
-            urls_and_timestamps = get_hn_urls(most_recent_ids)
-            max_item -= NUM_ITEMS_TO_FETCH
-            if not urls_and_timestamps:
-                continue
+        most_recent_ids = list(range(max_item, max_item - NUM_ITEMS_TO_FETCH, -1))
+        items = get_hn_items(most_recent_ids)
 
-            time = max(t for _, t in urls_and_timestamps)
-            urls = [url for url, _ in urls_and_timestamps]
+        # Only keep items with an extract and a title, or links
+        useful_items = [
+            item for item in items
+            if 'content' in item
+            and ((item['content']['title'] and item['content']['extract'])
+                 or item['content']['links'])
+        ]
 
-            item = {
-                'url': HN_URL,
-                'status': 200,
-                'timestamp': time,
-                'content': {
-                    'title': "Hacker News",
-                    'extract': "",
-                    'links': urls,
-                    'extra_links': [],
-                    'links_only': True,
-                },
-                'error': None
-            }
-            items.append(item)
-            ids_processed += most_recent_ids
+        max_item -= NUM_ITEMS_TO_FETCH
 
-        print(f"Sending batch of {len(items)}")
-        send_batch(items, user_id)
-        add_ids(ids_processed)
+        if len(useful_items) == 0:
+            continue
 
+        print(f"Sending batch of {len(useful_items)}")
+        print("Items", json.dumps(useful_items, indent=2), sep='\n')
+        retries = 0
+        while True:
+            status = send_batch(useful_items, user_id)
+            if status == 200:
+                add_ids(most_recent_ids)
+                break
+            elif status in {502, 504}:
+                retries += 1
+                if retries > 10:
+                    raise Exception(f"Error sending batch: {status}")
+                print("Got 502, retrying")
+                time.sleep(5)
+            else:
+                raise Exception(f"Error sending batch: {status}")
 
 
 if __name__ == '__main__':

@@ -295,6 +295,7 @@ def send_batch(batch_items, user_id):
 
     response = requests.post(POST_BATCH_URL, json=batch, headers={'Content-Type': 'application/json'})
     logger.info(f"Response status: {response.status_code}, {response.content}")
+    return response.status_code
 
 
 def get_batch(user_id: str):
