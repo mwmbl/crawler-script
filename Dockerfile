@@ -12,7 +12,7 @@ USER mwmbl
 WORKDIR /srv/mwmbl/crawler-script
 
 COPY justext justext
-COPY LICENSE README.md pyproject.toml poetry.lock main.py .
+COPY LICENSE README.md pyproject.toml poetry.lock main.py /srv/mwmbl/crawler-script/
 
 RUN python -m venv venv && \
   . venv/bin/activate && \
