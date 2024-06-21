@@ -14,7 +14,7 @@ from main import send_batch, get_user_id
 DATABASE_PATH = 'hn.db'
 HREF_REGEX = re.compile(r'href="([^"]+)"')
 HN_URL = 'https://news.ycombinator.com/'
-NUM_ITEMS_TO_FETCH = 100
+NUM_ITEMS_TO_FETCH = 500
 
 
 # Create a sqlite database to store IDs that have been retrieved
@@ -60,7 +60,7 @@ def get_hn_urls(most_recent_ids):
     non_existing_ids = [i for i in most_recent_ids if i not in existing_ids]
 
     # Call fetch_urls_for_item in parallel using threads
-    pool = ThreadPoolExecutor(max_workers=10)
+    pool = ThreadPoolExecutor(max_workers=25)
     futures = [pool.submit(fetch_urls_for_item, item_id) for item_id in non_existing_ids]
     urls = []
     for future in futures:
@@ -71,8 +71,16 @@ def get_hn_urls(most_recent_ids):
 
 def fetch_urls_for_item(item_id):
     # Extract URLs from the text
+    try:
+        return _try_fetch_urls_for_item(item_id)
+    except Exception as e:
+        print(f"Error fetching {item_id}", e)
+        return []
+
+
+def _try_fetch_urls_for_item(item_id):
     new_urls = []
-    item = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{item_id}.json').json()
+    item = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{item_id}.json', timeout=5).json()
     if item is not None:
         text = item.get('text', '')
         timestamp = item['time'] * 1000
@@ -83,7 +91,12 @@ def fetch_urls_for_item(item_id):
                 # url = match.group(1)
                 # Decode URL in format https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=33268319
                 decoded_url = unescape(url)
-                parsed_url = urlparse(decoded_url)
+                try:
+                    parsed_url = urlparse(decoded_url)
+                except ValueError:
+                    print("Unable to parse URL: ", decoded_url)
+                    continue
+
                 if parsed_url.netloc:
                     new_urls.append((decoded_url, timestamp))
                     print(f"Found URL in text for item {item_id}: {decoded_url}")

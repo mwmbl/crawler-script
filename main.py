@@ -25,7 +25,8 @@ from justext import core, utils
 from justext.core import html_to_dom
 from justext.paragraph import Paragraph
 
-DOMAIN = 'https://api.mwmbl.org/'
+DOMAIN = 'https://mwmbl.org/api/v1/'
+# DOMAIN = "http://localhost:8000/api/v1/"
 CRAWLER_ONLINE_URL = DOMAIN + 'crawler/'
 POST_BATCH_URL = DOMAIN + 'crawler/batches/'
 POST_NEW_BATCH_URL = DOMAIN + 'crawler/batches/new'
@@ -323,36 +324,10 @@ def crawl_and_send_batch(new_batch, num_threads, user_id):
     send_batch(crawl_results, user_id)
 
 
-def recursively_crawl_site(site: str, num_threads: int, user_id: str):
-    desired_domain = urlparse(site).netloc
-    crawled_urls = set()
-    site_urls = {site}
-
-    all_results = []
-    while len(crawled_urls) < MAX_SITE_URLS:
-        crawl_results = crawl_batch(list(site_urls - crawled_urls), num_threads)
-        all_results += crawl_results
-        crawled_urls |= site_urls
-        urls = set()
-        for item in crawl_results:
-            if item["content"] is not None:
-                urls |= set(item["content"]["links"]) | set(item["content"]["extra_links"])
-        new_site_urls = {url for url in urls if urlparse(url).netloc == desired_domain}
-        site_urls |= new_site_urls
-        if len(site_urls - crawled_urls) == 0:
-            logger.info("No more pages to crawl")
-            break
-
-    logger.info(f"Crawled a total of {len(all_results)} for domain {desired_domain}")
-    send_batch(all_results[:100], user_id)
-
-
 def run_continuously():
     argparser = ArgumentParser()
     argparser.add_argument("--num-threads", "-j", type=int, help="Number of threads to run concurrently", default=1)
     argparser.add_argument("--debug", "-d", action="store_true")
-    argparser.add_argument("--url", "-u", nargs='+', help="Crawl the given URLs instead of requesting batches from the server")
-    argparser.add_argument("--site", "-s", help=f"Recursively crawl a site (max {MAX_SITE_URLS} pages)")
 
     args = argparser.parse_args()
 
@@ -360,14 +335,6 @@ def run_continuously():
     logging.basicConfig(stream=sys.stdout, level=level)
 
     user_id = get_user_id()
-
-    if args.site is not None:
-        recursively_crawl_site(args.site, args.num_threads, user_id)
-        return
-
-    if args.url is not None:
-        crawl_and_send_batch(args.url, args.num_threads, user_id)
-        return
 
     while True:
         try:
