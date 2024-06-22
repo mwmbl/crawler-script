@@ -8,7 +8,9 @@ from datetime import datetime
 from functools import reduce
 from logging import getLogger
 from multiprocessing.pool import ThreadPool
+from pathlib import Path
 from ssl import SSLCertVerificationError
+from typing import Optional
 from urllib.parse import urlparse, urlunsplit, urljoin
 from urllib.robotparser import RobotFileParser
 from uuid import uuid4
@@ -275,8 +277,11 @@ def crawl_batch(batch, num_threads):
     return result
 
 
-def get_user_id():
-    path = xdg_config_home() / 'mwmbl' / 'config.json'
+def get_user_id(data_path: Optional[str]):
+    if data_path is None:
+        path = xdg_config_home() / 'mwmbl' / 'config.json'
+    else:
+        path = Path(data_path)
     try:
         return json.loads(path.read_text())['user_id']
     except FileNotFoundError:
@@ -328,13 +333,15 @@ def run_continuously():
     argparser = ArgumentParser()
     argparser.add_argument("--num-threads", "-j", type=int, help="Number of threads to run concurrently", default=1)
     argparser.add_argument("--debug", "-d", action="store_true")
+    argparser.add_argument("--data-path", "-p", type=str, help="Path to file for storing user data - "
+                                                               "this must be unique for each process run in parallel", default=None)
 
     args = argparser.parse_args()
 
     level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(stream=sys.stdout, level=level)
 
-    user_id = get_user_id()
+    user_id = get_user_id(args.data_path)
 
     while True:
         try:
