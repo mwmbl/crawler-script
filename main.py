@@ -19,19 +19,18 @@ import requests
 from requests import ReadTimeout
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 
-ALLOWED_EXCEPTIONS = (ValueError, ConnectionError, ReadTimeout, TimeoutError,
-                       OSError, NewConnectionError, MaxRetryError, SSLCertVerificationError)
 from xdg import xdg_config_home
 
 from justext import core, utils
 from justext.core import html_to_dom
 from justext.paragraph import Paragraph
 
-DOMAIN = 'https://mwmbl.org/api/v1/'
-# DOMAIN = "http://localhost:8000/api/v1/"
-CRAWLER_ONLINE_URL = DOMAIN + 'crawler/'
-POST_BATCH_URL = DOMAIN + 'crawler/batches/'
-POST_NEW_BATCH_URL = DOMAIN + 'crawler/batches/new'
+
+ALLOWED_EXCEPTIONS = (ValueError, ConnectionError, ReadTimeout, TimeoutError,
+                      OSError, NewConnectionError, MaxRetryError, SSLCertVerificationError)
+
+POST_BATCH_URL = '/api/v1/crawler/batches/'
+POST_NEW_BATCH_URL = '/api/v1/crawler/batches/new'
 
 TIMEOUT_SECONDS = 3
 MAX_FETCH_SIZE = 1024*1024
@@ -291,7 +290,7 @@ def get_user_id(data_path: Optional[str]):
         return user_id
 
 
-def send_batch(batch_items, user_id):
+def send_batch(domain_url: str, batch_items, user_id):
     batch = {
       'user_id': user_id,
       'items': batch_items,
@@ -299,12 +298,15 @@ def send_batch(batch_items, user_id):
 
     logger.info("Sending batch", batch)
 
-    response = requests.post(POST_BATCH_URL, json=batch, headers={'Content-Type': 'application/json'})
+    post_batch_url = f"{domain_url}{POST_BATCH_URL}"
+    logger.info(f"Sending batch to {post_batch_url}")
+    response = requests.post(post_batch_url, json=batch, headers={'Content-Type': 'application/json'})
     logger.info(f"Response status: {response.status_code}, {response.content}")
 
 
-def get_batch(user_id: str):
-    response = requests.post(POST_NEW_BATCH_URL, json={'user_id': user_id})
+def get_batch(domain_url: str, user_id: str):
+    post_new_batch_url = f"{domain_url}{POST_NEW_BATCH_URL}"
+    response = requests.post(post_new_batch_url, json={'user_id': user_id})
     if response.status_code != 200:
         raise ValueError(f"No batch received, status code {response.status_code}, content {response.content}")
 
@@ -315,18 +317,18 @@ def get_batch(user_id: str):
     return urls_to_crawl
 
 
-def run_crawl_iteration(user_id, num_threads):
-    new_batch = get_batch(user_id)
+def run_crawl_iteration(domain_url: str, user_id, num_threads):
+    new_batch = get_batch(domain_url, user_id)
     logger.info(f"Got batch with {len(new_batch)} items")
-    crawl_and_send_batch(new_batch, num_threads, user_id)
+    crawl_and_send_batch(domain_url, new_batch, num_threads, user_id)
 
 
-def crawl_and_send_batch(new_batch, num_threads, user_id):
+def crawl_and_send_batch(domain_url: str, new_batch, num_threads, user_id):
     start_time = datetime.now()
     crawl_results = crawl_batch(new_batch, num_threads)
     total_time = (datetime.now() - start_time).total_seconds()
     logger.info(f"Crawled batch in {total_time} seconds")
-    send_batch(crawl_results, user_id)
+    send_batch(domain_url, crawl_results, user_id)
 
 
 def run_continuously():
@@ -335,6 +337,7 @@ def run_continuously():
     argparser.add_argument("--debug", "-d", action="store_true")
     argparser.add_argument("--data-path", "-p", type=str, help="Path to file for storing user data - "
                                                                "this must be unique for each process run in parallel", default=None)
+    argparser.add_argument("--domain", type=str, default="https://mwmbl.org")
 
     args = argparser.parse_args()
 
@@ -342,10 +345,11 @@ def run_continuously():
     logging.basicConfig(stream=sys.stdout, level=level)
 
     user_id = get_user_id(args.data_path)
+    domain = args.domain.rstrip('/')
 
     while True:
         try:
-            run_crawl_iteration(user_id, args.num_threads)
+            run_crawl_iteration(domain, user_id, args.num_threads)
         except Exception:
             logger.exception("Exception running crawl iteration")
             time.sleep(10)
