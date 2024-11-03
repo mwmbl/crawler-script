@@ -4,10 +4,13 @@ Mwmbl Crawler Script
 Usage:
 
 ```
-python main.py [-j n] [-u url1 url2 ...]
+python main.py [-j n]
 ```
 
-where n is the number of threads you want to run in parallel. If you specify URLs using the `-u` option, then just those URLs will be crawled instead of retrieving batches from the server.
+where n is the number of threads you want to run in parallel.
+
+Crawling custom URLs is no longer supported for security and quality reasons. To submit a domain
+to crawl, please visit https://mwmbl.org/app/domain-submissions/new
 
 Installing
 ----------
