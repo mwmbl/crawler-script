@@ -26,6 +26,9 @@ from justext.core import html_to_dom
 from justext.paragraph import Paragraph
 
 
+
+VERSION = "1.0"
+HEADERS = {"User-Agent": f"mwmbl/{VERSION} (https://mwmbl.org)"}
 ALLOWED_EXCEPTIONS = (ValueError, ConnectionError, ReadTimeout, TimeoutError,
                       OSError, NewConnectionError, MaxRetryError, SSLCertVerificationError)
 
@@ -55,7 +58,7 @@ def fetch(url):
     https://stackoverflow.com/a/22347526
     """
 
-    r = requests.get(url, stream=True, timeout=TIMEOUT_SECONDS)
+    r = requests.get(url, stream=True, timeout=TIMEOUT_SECONDS, headers=HEADERS)
 
     size = 0
     start = time.time()
